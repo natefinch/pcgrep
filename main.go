@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"compress/bzip2"
 	"compress/gzip"
-	"fmt"
 	"io"
 	"log"
 	"os"
@@ -13,26 +12,29 @@ import (
 	"sync"
 )
 
+var errlog = log.New(os.Stderr, "", 0)
+
 func main() {
 	log.SetFlags(0)
 
 	if len(os.Args) < 3 {
 		usage()
-		return
+		os.Exit(1)
 	}
 	pat := os.Args[1]
 	reg, err := regexp.Compile(pat)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "Error compiling regex: %v", err)
+		errlog.Println("Error compiling regex: %v", err)
 		os.Exit(1)
 	}
 	files := os.Args[2:]
-	var wg sync.WaitGroup
+
+	var readers sync.WaitGroup
 	for _, f := range files {
-		wg.Add(1)
-		go grep(f, reg, &wg)
+		readers.Add(1)
+		go read(f, &readers, reg)
 	}
-	wg.Wait()
+	readers.Wait()
 }
 
 func usage() {
@@ -42,11 +44,11 @@ usage:
 `, filepath.Base(os.Args[0]))
 }
 
-func grep(name string, reg *regexp.Regexp, wg *sync.WaitGroup) {
+func read(name string, wg *sync.WaitGroup, reg *regexp.Regexp) {
 	defer wg.Done()
 	f, err := os.Open(name)
 	if err != nil {
-		log.Println(err)
+		errlog.Println(err)
 		return
 	}
 	defer f.Close()
@@ -62,14 +64,17 @@ func grep(name string, reg *regexp.Regexp, wg *sync.WaitGroup) {
 	case ".bz":
 		r = bzip2.NewReader(f)
 	default:
-		fmt.Fprintln(os.Stderr, "*** Unknown extension:", ext)
+		errlog.Println("Unknown extension:", ext)
 		return
 	}
 	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
 		b := scanner.Bytes()
 		if reg.Match(b) {
-			log.Printf("%s: %s", name, string(b))
+			log.Printf("%s: %s", name, b)
 		}
+	}
+	if err := scanner.Err(); err != nil {
+		errlog.Printf("Error while reading %s: %s", name, err)
 	}
 }
